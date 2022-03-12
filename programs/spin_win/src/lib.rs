@@ -103,6 +103,7 @@ pub struct Initialize<'info> {
     /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(init, payer=initializer, seeds=[ESCROW_PDA_SEED.as_ref()], bump = _bump)]
     state : Account<'info, SpinItemList>,
+    
 
     system_program: Program<'info, System>,
 }
