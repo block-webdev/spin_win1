@@ -3,7 +3,7 @@ import { Program } from '@project-serum/anchor';
 import { SpinWin } from '../target/types/spin_win';
 
 import { PublicKey, SystemProgram, Transaction, Connection, Commitment, SYSVAR_RENT_PUBKEY } from '@solana/web3.js';
-import { TOKEN_PROGRAM_ID, Token } from "@solana/spl-token";
+import { TOKEN_PROGRAM_ID, Token, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { assert } from "chai";
 
 
@@ -142,6 +142,7 @@ describe('spin_win', () => {
         accounts: {
           initializer: initializerMainAccount.publicKey,
           state: pool_account_pda,
+          escrowAccount: escrowAccount.publicKey,
           systemProgram: anchor.web3.SystemProgram.programId,
         },
         signers: [initializerMainAccount]
@@ -154,43 +155,43 @@ describe('spin_win', () => {
   it("Set Item", async () => {
     console.log('Start to Set Item...');
 
-      let randomPubkey = anchor.web3.Keypair.generate().publicKey;
-      let [_token_vault, _token_vault_bump] = await PublicKey.findProgramAddress([Buffer.from(randomPubkey.toBuffer())], program.programId);
+    let randomPubkey = anchor.web3.Keypair.generate().publicKey;
+    let [_token_vault, _token_vault_bump] = await PublicKey.findProgramAddress([Buffer.from(randomPubkey.toBuffer())], program.programId);
 
-      token_vault_list.push({vault: _token_vault, bump: _token_vault_bump});
+    token_vault_list.push({ vault: _token_vault, bump: _token_vault_bump });
 
-      let ratio_list = [];
-      let amount_list = [];
-      for (let i = 0; i < 15; i++) {
-        if (i >= 0 && i <= 4) {
-          ratio_list.push(2);
-        } else if (i >= 5 && i <= 9) {
-          ratio_list.push(10);
-        } else {
-          ratio_list.push(8);
-        }
-        amount_list.push(new anchor.BN(2));
+    let ratio_list = [];
+    let amount_list = [];
+    for (let i = 0; i < 15; i++) {
+      if (i >= 0 && i <= 4) {
+        ratio_list.push(2);
+      } else if (i >= 5 && i <= 9) {
+        ratio_list.push(10);
+      } else {
+        ratio_list.push(8);
       }
+      amount_list.push(new anchor.BN(2));
+    }
 
-      await program.rpc.setItem(
-        _token_vault_bump,
-        ratio_list,
-        amount_list,
-        {
-          accounts: {
-            owner: initializerMainAccount.publicKey,
-            state: pool_account_pda,
-            tokenMint: mintA.publicKey,
-            tokenVault: _token_vault,
-            rand: randomPubkey,
-            // rewardAccount: initializerTokenAccountA,
-            tokenProgram: TOKEN_PROGRAM_ID,
-            systemProgram: anchor.web3.SystemProgram.programId,
-            rent: SYSVAR_RENT_PUBKEY
-          },
-          signers: [initializerMainAccount]
-        }
-      );
+    await program.rpc.setItem(
+      _token_vault_bump,
+      ratio_list,
+      amount_list,
+      {
+        accounts: {
+          owner: initializerMainAccount.publicKey,
+          state: pool_account_pda,
+          tokenMint: mintA.publicKey,
+          tokenVault: _token_vault,
+          rand: randomPubkey,
+          // rewardAccount: initializerTokenAccountA,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: anchor.web3.SystemProgram.programId,
+          rent: SYSVAR_RENT_PUBKEY
+        },
+        signers: [initializerMainAccount]
+      }
+    );
 
     console.log('End to Set Item...');
   });
@@ -212,6 +213,108 @@ describe('spin_win', () => {
     console.log('spin token vault : ', t_vault_account);
 
     console.log('last spin index : ', _state.lastSpinindex);
+    // await program.rpc.transferRewards(
+    //   _state.lastSpinindex,
+    //   {
+    //     accounts: {
+    //       owner: initializerMainAccount.publicKey,
+    //       state: pool_account_pda,
+    //       tokenMint: mintA.publicKey,
+    //       tokenVault: t_vault_account.vault,
+    //       destAccount: initializerTokenAccountA,
+    //       systemProgram: anchor.web3.SystemProgram.programId,
+    //       tokenProgram: TOKEN_PROGRAM_ID,
+    //     },
+    //     signers: [initializerMainAccount]
+    //   });
+
+    console.log('End to spin_wheel...');
+  });
+
+  it("claim rewards", async () => {
+    console.log('Start to claim rewards...');
+
+    var myToken = new Token(
+      provider.connection,
+      mintA.publicKey,
+      TOKEN_PROGRAM_ID,
+      payer
+    );
+
+    let _state1 = await program.account.spinItemList.fetch(
+      pool_account_pda
+    );
+    console.log('ddddddddddddddd', _state1.escrowAccount.toBase58());
+
+    let rewardPDA = await anchor.web3.PublicKey.findProgramAddress(
+      [pool_account_pda.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mintA.publicKey.toBuffer()],
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+    if ((await provider.connection.getAccountInfo(rewardPDA[0])) == null) {
+      await provider.send(
+        (() => {
+          const keys = [
+            { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+            { pubkey: rewardPDA[0], isSigner: false, isWritable: true },
+            { pubkey: pool_account_pda, isSigner: false, isWritable: false },
+            { pubkey: mintA.publicKey, isSigner: false, isWritable: false },
+            {
+              pubkey: anchor.web3.SystemProgram.programId,
+              isSigner: false,
+              isWritable: false,
+            },
+            { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+            {
+              pubkey: anchor.web3.SYSVAR_RENT_PUBKEY,
+              isSigner: false,
+              isWritable: false,
+            },
+          ];
+          let transaction = new Transaction();
+          transaction.add(
+            new anchor.web3.TransactionInstruction({
+              keys,
+              programId: ASSOCIATED_TOKEN_PROGRAM_ID,
+              data: Buffer.from([]),
+            }));
+          return transaction;
+        })(),
+        [payer]
+      );
+    }
+
+    // var sourceAccount = await myToken.getOrCreateAssociatedAccountInfo(pool_account_pda);
+    let sourceAccount = rewardPDA[0];
+
+    await mintA.mintTo(
+      sourceAccount,
+      mintAuthority.publicKey,
+      [mintAuthority],
+      100
+    );
+    let tokenAmount = await provider.connection.getTokenAccountBalance(sourceAccount);
+    console.log('444xxx444444444444444', tokenAmount);
+
+    var destAccount = await myToken.getOrCreateAssociatedAccountInfo(initializerMainAccount.publicKey);
+    tokenAmount = await provider.connection.getTokenAccountBalance(destAccount.address);
+    console.log('~~~~~~~~~~~~~~~~~~~~~~~111', tokenAmount);
+
+    await program.rpc.claim(
+      new anchor.BN(20),
+      {
+        accounts: {
+          owner: initializerMainAccount.publicKey,
+          state: pool_account_pda,
+          sourceRewardAccount: sourceAccount,
+          destRewardAccount: destAccount.address,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        },
+        signers: [initializerMainAccount]
+      });
+
+    tokenAmount = await provider.connection.getTokenAccountBalance(destAccount.address);
+    console.log('~~~~~~~~~~~~~~~~~~~~~~~222', tokenAmount);
+
     // await program.rpc.transferRewards(
     //   _state.lastSpinindex,
     //   {

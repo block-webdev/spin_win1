@@ -3,7 +3,7 @@ use anchor_lang::solana_program::{clock};
 use anchor_spl::token::{self, CloseAccount, Mint, SetAuthority, TokenAccount, Transfer};
 use spl_token::instruction::AuthorityType;
 
-declare_id!("rnmMFkkuYdz1Gz3V4Pzn1dJb1UasQeYgoAi2WixqiEV");
+declare_id!("Cuw7DiTqrwe1vzuXUABq3sToxCXauMKT9UsniivXyruM");
 
 #[program]
 pub mod spin_win {
@@ -20,8 +20,6 @@ pub mod spin_win {
         let state = &mut ctx.accounts.state;
         state.amount_list = [0; SPIN_ITEM_COUNT];
         state.ratio_list = [0; SPIN_ITEM_COUNT];
-
-        state.nonce = _pool_bump;
 
         Ok(())
     }
@@ -59,23 +57,24 @@ pub mod spin_win {
         return Ok(());
     }
 
-    pub fn transfer_rewards(ctx: Context<TransferRewards>, spin_index: u8) -> ProgramResult {
+    pub fn claim(
+        ctx : Context<Claim>,
+        amount: u64,
+        ) -> ProgramResult {
 
-        let state = &ctx.accounts.state;
-        let amount = state.amount_list[spin_index as usize];
+        let (_vault_authority, vault_authority_bump) =
+        Pubkey::find_program_address(&[ESCROW_PDA_SEED.as_ref()], ctx.program_id);
+        let authority_seeds = &[&ESCROW_PDA_SEED.as_bytes()[..], &[vault_authority_bump]];
 
-        let cpi_ctx = CpiContext::new(
-            ctx.accounts.token_program.to_account_info().clone(),
-            token::Transfer {
-                from: ctx.accounts.token_vault.to_account_info(),
-                to: ctx.accounts.dest_account.to_account_info(),
-                authority: ctx.accounts.owner.to_account_info(),
-            },
+        token::transfer(
+            ctx.accounts.into_transfer_to_pda_context()
+                .with_signer(&[&authority_seeds[..]]),
+        amount,
         );
-        token::transfer(cpi_ctx, amount)?;
 
         Ok(())
     }
+
 }
 
 fn get_spinresult(state: &mut SpinItemList) -> u8 {
@@ -103,7 +102,6 @@ pub struct Initialize<'info> {
     /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(init, payer=initializer, seeds=[ESCROW_PDA_SEED.as_ref()], bump = _bump)]
     state : Account<'info, SpinItemList>,
-    
 
     system_program: Program<'info, System>,
 }
@@ -114,7 +112,6 @@ pub struct Initialize<'info> {
 pub struct SpinItemList {
     ratio_list: [u8; SPIN_ITEM_COUNT],
     amount_list: [u64; SPIN_ITEM_COUNT],
-    nonce: u8,
     last_spinindex: u8,
 }
 
@@ -163,29 +160,32 @@ pub struct SpinWheel<'info> {
 }
 
 #[derive(Accounts)]
-pub struct TransferRewards<'info> {
-    /// CHECK: this is not dangerous.
+pub struct Claim<'info> {
     #[account(mut, signer)]
-    owner : AccountInfo<'info>, 
+    owner : AccountInfo<'info>,
 
-    /// CHECK: this is not dangerous.
-    #[account(mut)]
     state : Account<'info, SpinItemList>,
 
-    token_mint: Account<'info, Mint>,
-    #[account(mut, 
-        constraint = token_vault.mint == token_mint.key(),
-        constraint = token_vault.owner == *owner.key,
-    )]
-    token_vault: Account<'info, TokenAccount>,
-
-    /// CHECK: this is not dangerous.
     #[account(mut,owner=spl_token::id())]
-    dest_account : AccountInfo<'info>,
+    source_reward_account : AccountInfo<'info>,
 
-    /// CHECK: this is not dangerous.
+    #[account(mut,owner=spl_token::id())]
+    dest_reward_account : AccountInfo<'info>,
+
     #[account(address=spl_token::id())]
     token_program : AccountInfo<'info>,
+}
 
-    system_program : Program<'info,System>,
+impl<'info> Claim<'info> {
+    fn into_transfer_to_pda_context(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
+        let cpi_accounts = Transfer {
+            from: self
+                .source_reward_account
+                .to_account_info()
+                .clone(),
+            to: self.dest_reward_account.to_account_info().clone(),
+            authority: self.state.to_account_info().clone(),
+        };
+        CpiContext::new(self.token_program.clone(), cpi_accounts)
+    }
 }
