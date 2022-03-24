@@ -136,16 +136,43 @@ describe('spin_win', () => {
 
     console.log('initialize start...');
 
+
+    // let randomPubkey = anchor.web3.Keypair.generate().publicKey;
+    // let [_pool111, _bump111] = await PublicKey.findProgramAddress(
+    //   [randomPubkey.toBuffer()],
+    //   program.programId
+    // );
+
+
+    const [_pool111, _bump111] = await PublicKey.findProgramAddress([Buffer.from(anchor.utils.bytes.utf8.encode("sw_game_vault_auth"))], program.programId);
+
+    pool_account_pda = await PublicKey.createWithSeed(
+      initializerMainAccount.publicKey,
+      "user-lottery-pool",
+      program.programId,
+    );
+
     await program.rpc.initialize(
-      _pool_bump,
+      _bump111,
       {
         accounts: {
           initializer: initializerMainAccount.publicKey,
+          pool: _pool111,
           state: pool_account_pda,
-          escrowAccount: escrowAccount.publicKey,
           systemProgram: anchor.web3.SystemProgram.programId,
         },
-        signers: [initializerMainAccount]
+        signers: [initializerMainAccount],
+        preInstructions: [
+          SystemProgram.createAccountWithSeed({
+            fromPubkey: initializerMainAccount.publicKey,
+            basePubkey: initializerMainAccount.publicKey,
+            seed: "user-lottery-pool",
+            newAccountPubkey: pool_account_pda,
+            lamports: await provider.connection.getMinimumBalanceForRentExemption(4960),
+            space: 4960,
+            programId: program.programId,
+          })
+        ]
       }
     );
 
@@ -173,29 +200,30 @@ describe('spin_win', () => {
       amount_list.push(new anchor.BN(2));
     }
 
-    await program.rpc.setItem(
-      _token_vault_bump,
-      ratio_list,
-      amount_list,
-      {
-        accounts: {
-          owner: initializerMainAccount.publicKey,
-          state: pool_account_pda,
-          tokenMint: mintA.publicKey,
-          tokenVault: _token_vault,
-          rand: randomPubkey,
-          // rewardAccount: initializerTokenAccountA,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          systemProgram: anchor.web3.SystemProgram.programId,
-          rent: SYSVAR_RENT_PUBKEY
-        },
-        signers: [initializerMainAccount]
-      }
-    );
+    let mintkeys = [];
+    for (let i = 0; i < 10; i++) {
+      mintkeys.push(anchor.web3.Keypair.generate().publicKey);
+    }
+    let item_mint_list = [mintkeys, 10];
+
+    for (let i = 0; i < 15; i++) {
+      await program.rpc.setItem(
+        i,
+        mintkeys,
+        10,
+        i == 14 ? 2 : 7,
+        new anchor.BN(3),
+        {
+          accounts: {
+            state: pool_account_pda,
+          },
+          // signers: [initializerMainAccount]
+        }
+      );
+    }
 
     console.log('End to Set Item...');
   });
-
 
   it("spin_wheel", async () => {
     console.log('Start to spin_wheel...');
@@ -231,6 +259,8 @@ describe('spin_win', () => {
     console.log('End to spin_wheel...');
   });
 
+  return;
+
   it("claim rewards", async () => {
     console.log('Start to claim rewards...');
 
@@ -244,7 +274,6 @@ describe('spin_win', () => {
     let _state1 = await program.account.spinItemList.fetch(
       pool_account_pda
     );
-    console.log('ddddddddddddddd', _state1.escrowAccount.toBase58());
 
     let rewardPDA = await anchor.web3.PublicKey.findProgramAddress(
       [pool_account_pda.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mintA.publicKey.toBuffer()],

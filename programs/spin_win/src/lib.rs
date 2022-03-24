@@ -3,56 +3,66 @@ use anchor_lang::solana_program::{clock};
 use anchor_spl::token::{self, CloseAccount, Mint, SetAuthority, TokenAccount, Transfer};
 use spl_token::instruction::AuthorityType;
 
-declare_id!("Cuw7DiTqrwe1vzuXUABq3sToxCXauMKT9UsniivXyruM");
+declare_id!("6LyE69h6v9ZBfmXNcD5QX9qhxTB2JWwzCgQpzooYML6D");
 
 #[program]
 pub mod spin_win {
     use super::*;
 
-    pub const ESCROW_PDA_SEED: &str = "sw_game_seeds";
+    pub const ESCROW_PDA_SEED: &str = "sw_game_vault_auth";
     pub const SPIN_ITEM_COUNT: usize = 15;
+    pub const REWARD_TOKEN_COUNT_PER_ITEM: usize = 10;
+    pub const MAX_REWARD_TOKEN_COUNT: usize = 150; // REWARD_TOKEN_COUNT_PER_ITEM * SPIN_ITEM_COUNT;
 
     pub fn initialize(
-        ctx: Context<Initialize>, _pool_bump: u8,
+        ctx: Context<Initialize>,
+        _bump : u8,
     ) -> ProgramResult {
         msg!("initialize");
 
-        let state = &mut ctx.accounts.state;
-        state.amount_list = [0; SPIN_ITEM_COUNT];
-        state.ratio_list = [0; SPIN_ITEM_COUNT];
+        let pool = &mut ctx.accounts.pool;
+        pool.owner = *ctx.accounts.initializer.key;
+        pool.bump = _bump;
+
+        let mut state = ctx.accounts.state.load_init()?;
+
+        Ok(())
+    }
+
+    pub fn add_item(
+        ctx: Context<SpinWheel>,
+        item_mint_list: [Pubkey; 10],
+        count: u8,
+        ratio: u8,
+        amount: u64,
+    ) -> ProgramResult {
+        msg!("add_item");
+
+        let mut state = ctx.accounts.state.load_mut()?;
+        state.add_spinitem(ItemRewardMints{item_mint_list, count}, ratio, amount)?;
 
         Ok(())
     }
 
     pub fn set_item(
-        ctx: Context<SetItem>,
-        token_vault_bump: u8,
-        ratio: [u8; 15],
-        amount: [u64; 15],
+        ctx: Context<SpinWheel>,
+        index: u8,
+        item_mint_list: [Pubkey; 10],
+        count: u8,
+        ratio: u8,
+        amount: u64,
     ) -> ProgramResult {
         msg!("set_item");
 
-        let state = &mut ctx.accounts.state;
-        state.ratio_list = ratio;
-        state.amount_list = amount;
-
-        // let cpi_ctx = CpiContext::new(
-        //     ctx.accounts.token_program.to_account_info().clone(),
-        //     token::Transfer {
-        //         from: ctx.accounts.reward_account.to_account_info(),
-        //         to: ctx.accounts.token_vault.to_account_info(),
-        //         authority: ctx.accounts.owner.to_account_info(),
-        //     },
-        // );
-        // token::transfer(cpi_ctx, amount)?;
+        let mut state = ctx.accounts.state.load_mut()?;
+        state.set_spinitem(index, ItemRewardMints{item_mint_list, count}, ratio, amount)?;
 
         Ok(())
     }
 
     pub fn spin_wheel(ctx: Context<SpinWheel>) -> ProgramResult {
-        let state = &mut ctx.accounts.state;
-        let spin_index: u8 = get_spinresult(state) as u8;
-        state.last_spinindex = spin_index;
+        let mut state = ctx.accounts.state.load_mut()?;
+        state.get_spinresult();
 
         return Ok(());
     }
@@ -66,6 +76,11 @@ pub mod spin_win {
         Pubkey::find_program_address(&[ESCROW_PDA_SEED.as_ref()], ctx.program_id);
         let authority_seeds = &[&ESCROW_PDA_SEED.as_bytes()[..], &[vault_authority_bump]];
 
+        // let pool = &ctx.accounts.pool;
+        // let authority_seeds = &[
+        //     pool.rand.as_ref(),
+        //     &[pool.bump],
+        // ];
         token::transfer(
             ctx.accounts.into_transfer_to_pda_context()
                 .with_signer(&[&authority_seeds[..]]),
@@ -74,89 +89,123 @@ pub mod spin_win {
 
         Ok(())
     }
-
 }
-
-fn get_spinresult(state: &mut SpinItemList) -> u8 {
-    let c = clock::Clock::get().unwrap();
-    let r = (c.unix_timestamp % 100) as u8;
-    let mut start = 0;
-    for (pos, item) in state.ratio_list.iter().enumerate() {
-        let end = start + item;
-        if r >= start && r < end {
-            return pos as u8;
-        }
-        start = end;
-    }
-
-    return 0;
-}
-
-#[derive(Accounts)]
-#[instruction(_bump: u8)]
-pub struct Initialize<'info> {
-    /// CHECK: This is not dangerous because we don't read or write from this account
-    #[account(mut, signer)]
-    initializer : AccountInfo<'info>,
-
-    /// CHECK: This is not dangerous because we don't read or write from this account
-    #[account(init, payer=initializer, seeds=[ESCROW_PDA_SEED.as_ref()], bump = _bump)]
-    state : Account<'info, SpinItemList>,
-
-    system_program: Program<'info, System>,
-}
-
 
 #[account]
 #[derive(Default)]
-pub struct SpinItemList {
-    ratio_list: [u8; SPIN_ITEM_COUNT],
-    amount_list: [u64; SPIN_ITEM_COUNT],
-    last_spinindex: u8,
+pub struct Pool {
+    pub owner : Pubkey,
+    pub bump : u8,
 }
-
 
 #[derive(Accounts)]
-#[instruction(_token_bump: u8)]
-pub struct SetItem<'info> {
-    /// CHECK: this is not dangerous.
+#[instruction(_bump : u8)]
+pub struct Initialize<'info> {
+    /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(mut, signer)]
-    owner : AccountInfo<'info>, 
+    pub initializer: AccountInfo<'info>,
 
-    /// CHECK: this is not dangerous.
-    #[account(mut)]
-    state : Account<'info, SpinItemList>,
+    #[account(init, seeds=[ESCROW_PDA_SEED.as_ref()], bump=_bump, payer=initializer)]
+    pool : Account<'info, Pool>,
 
-    token_mint: Account<'info, Mint>,
-    #[account(
-        init,
-        seeds = [(*rand.key).as_ref()],
-        bump = _token_bump,
-        payer = owner,
-        token::mint = token_mint,
-        token::authority = owner,
-    )]
-    token_vault: Account<'info, TokenAccount>,
+    #[account(zero)]
+    state : AccountLoader<'info, SpinItemList>,
 
-    rand : AccountInfo<'info>,
-
-    /// CHECK: this is not dangerous.
-    // #[account(mut)]
-    // reward_account : Account<'info, TokenAccount>,
-
-    /// CHECK: this is not dangerous.
-    #[account(address=spl_token::id())]
-    token_program : AccountInfo<'info>,
-
-    system_program : Program<'info,System>,
-    rent: Sysvar<'info, Rent>
+    /// CHECK: This is not dangerous because we don't read or write from this account
+    pub system_program: AccountInfo<'info>,
 }
 
+// space : 32 * 10 + 1
+#[zero_copy]
+#[derive(Default, AnchorSerialize, AnchorDeserialize)]
+pub struct ItemRewardMints {
+    item_mint_list: [Pubkey; REWARD_TOKEN_COUNT_PER_ITEM],
+    count: u8,
+}
+
+// space : 4960
+#[account(zero_copy)]
+#[repr(packed)]
+pub struct SpinItemList {
+    reward_mint_list: [ItemRewardMints; SPIN_ITEM_COUNT],   // 321 * 15
+    ratio_list: [u8; SPIN_ITEM_COUNT],  // 15
+    amount_list: [u64; SPIN_ITEM_COUNT],    // 8 * 15
+    last_spinindex: u8, // 1
+    count: u8, // 1
+}
+
+impl ItemRewardMints {
+    pub fn add_reward_item(&mut self, reward_mint: Pubkey) {
+        self.item_mint_list[self.count as usize] = reward_mint;
+        self.count += 1;
+    }
+}
+
+impl Default for SpinItemList {
+    #[inline]
+    fn default() -> SpinItemList {
+        SpinItemList {
+            reward_mint_list: [
+                ItemRewardMints {
+                    ..Default::default()
+                }; SPIN_ITEM_COUNT
+            ],
+            ratio_list: [0; SPIN_ITEM_COUNT],
+            amount_list: [0; SPIN_ITEM_COUNT],
+            last_spinindex: 0,
+            count: 0,
+        }
+    }
+}
+
+impl SpinItemList {
+    pub fn add_spinitem(&mut self, item_mint_list: ItemRewardMints, ratio: u8, amount: u64,) -> Result<()> {
+        require!(self.count <= SPIN_ITEM_COUNT as u8, SpinError::CountOverflowAddItem);
+
+        self.reward_mint_list[self.count as usize] = item_mint_list;
+        self.ratio_list[self.count as usize] = ratio;
+        self.amount_list[self.count as usize] = amount;
+        self.count += 1;
+
+        Ok(())
+    }
+
+    pub fn set_spinitem(&mut self, index: u8, item_mint_list: ItemRewardMints, ratio: u8, amount: u64,) -> Result<()> {
+        require!(index < SPIN_ITEM_COUNT as u8, SpinError::IndexOverflowSetItem);
+
+        self.reward_mint_list[index as usize] = item_mint_list;
+        self.ratio_list[index as usize] = ratio;
+        self.amount_list[index as usize] = amount;
+        if self.count <= index {
+            self.count = index + 1;
+        }
+
+        Ok(())
+    }
+
+    pub fn clear_spinitem(&mut self) {
+        self.count = 0;
+    }
+
+    pub fn get_spinresult(&mut self) {
+        let c = clock::Clock::get().unwrap();
+        let r = (c.unix_timestamp % 100) as u8;
+        let mut start = 0;
+        for (pos, item) in self.ratio_list.iter().enumerate() {
+            let end = start + item;
+            if r >= start && r < end {
+                self.last_spinindex = pos as u8;
+                return;
+            }
+            start = end;
+        }
+    }
+}
 
 #[derive(Accounts)]
 pub struct SpinWheel<'info> {
     #[account(mut)]
-    state : Account<'info, SpinItemList>,
+    state : AccountLoader<'info, SpinItemList>,
 }
 
 #[derive(Accounts)]
@@ -164,7 +213,11 @@ pub struct Claim<'info> {
     #[account(mut, signer)]
     owner : AccountInfo<'info>,
 
-    state : Account<'info, SpinItemList>,
+    state : AccountLoader<'info, SpinItemList>,
+
+    #[account(mut)]
+    pool : Account<'info, Pool>,
+
 
     #[account(mut,owner=spl_token::id())]
     source_reward_account : AccountInfo<'info>,
@@ -184,8 +237,17 @@ impl<'info> Claim<'info> {
                 .to_account_info()
                 .clone(),
             to: self.dest_reward_account.to_account_info().clone(),
-            authority: self.state.to_account_info().clone(),
+            authority: self.pool.to_account_info().clone(),
         };
         CpiContext::new(self.token_program.clone(), cpi_accounts)
     }
+}
+
+#[error]
+pub enum SpinError {
+    #[msg("Count Overflow To Add Item")]
+    CountOverflowAddItem,
+
+    #[msg("Index Overflow To Set Item")]
+    IndexOverflowSetItem,
 }
