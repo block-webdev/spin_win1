@@ -168,8 +168,8 @@ describe('spin_win', () => {
             basePubkey: initializerMainAccount.publicKey,
             seed: "user-lottery-pool",
             newAccountPubkey: pool_account_pda,
-            lamports: await provider.connection.getMinimumBalanceForRentExemption(4960),
-            space: 4960,
+            lamports: await provider.connection.getMinimumBalanceForRentExemption(4975),
+            space: 4975,
             programId: program.programId,
           })
         ]

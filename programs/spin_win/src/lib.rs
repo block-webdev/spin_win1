@@ -3,7 +3,7 @@ use anchor_lang::solana_program::{clock};
 use anchor_spl::token::{self, CloseAccount, Mint, SetAuthority, TokenAccount, Transfer};
 use spl_token::instruction::AuthorityType;
 
-declare_id!("6LyE69h6v9ZBfmXNcD5QX9qhxTB2JWwzCgQpzooYML6D");
+declare_id!("G2roHNqPvkVz4hko9Ha8443QrFUGg5YFkLDqW7Cyt1LK");
 
 #[program]
 pub mod spin_win {
@@ -33,13 +33,14 @@ pub mod spin_win {
         ctx: Context<SpinWheel>,
         item_mint_list: [Pubkey; 10],
         count: u8,
+        token_type: u8,
         ratio: u8,
         amount: u64,
     ) -> ProgramResult {
         msg!("add_item");
 
         let mut state = ctx.accounts.state.load_mut()?;
-        state.add_spinitem(ItemRewardMints{item_mint_list, count}, ratio, amount)?;
+        state.add_spinitem(ItemRewardMints{item_mint_list, count}, token_type, ratio, amount)?;
 
         Ok(())
     }
@@ -49,13 +50,14 @@ pub mod spin_win {
         index: u8,
         item_mint_list: [Pubkey; 10],
         count: u8,
+        token_type: u8,
         ratio: u8,
         amount: u64,
     ) -> ProgramResult {
         msg!("set_item");
 
         let mut state = ctx.accounts.state.load_mut()?;
-        state.set_spinitem(index, ItemRewardMints{item_mint_list, count}, ratio, amount)?;
+        state.set_spinitem(index, ItemRewardMints{item_mint_list, count}, token_type, ratio, amount)?;
 
         Ok(())
     }
@@ -123,11 +125,12 @@ pub struct ItemRewardMints {
     count: u8,
 }
 
-// space : 4960
+// space : 4975
 #[account(zero_copy)]
 #[repr(packed)]
 pub struct SpinItemList {
     reward_mint_list: [ItemRewardMints; SPIN_ITEM_COUNT],   // 321 * 15
+    token_type_list: [u8; SPIN_ITEM_COUNT],   // 15
     ratio_list: [u8; SPIN_ITEM_COUNT],  // 15
     amount_list: [u64; SPIN_ITEM_COUNT],    // 8 * 15
     last_spinindex: u8, // 1
@@ -150,6 +153,7 @@ impl Default for SpinItemList {
                     ..Default::default()
                 }; SPIN_ITEM_COUNT
             ],
+            token_type_list: [0; SPIN_ITEM_COUNT],
             ratio_list: [0; SPIN_ITEM_COUNT],
             amount_list: [0; SPIN_ITEM_COUNT],
             last_spinindex: 0,
@@ -159,10 +163,11 @@ impl Default for SpinItemList {
 }
 
 impl SpinItemList {
-    pub fn add_spinitem(&mut self, item_mint_list: ItemRewardMints, ratio: u8, amount: u64,) -> Result<()> {
+    pub fn add_spinitem(&mut self, item_mint_list: ItemRewardMints, token_type: u8, ratio: u8, amount: u64,) -> Result<()> {
         require!(self.count <= SPIN_ITEM_COUNT as u8, SpinError::CountOverflowAddItem);
 
         self.reward_mint_list[self.count as usize] = item_mint_list;
+        self.token_type_list[self.count as usize] = token_type;
         self.ratio_list[self.count as usize] = ratio;
         self.amount_list[self.count as usize] = amount;
         self.count += 1;
@@ -170,10 +175,11 @@ impl SpinItemList {
         Ok(())
     }
 
-    pub fn set_spinitem(&mut self, index: u8, item_mint_list: ItemRewardMints, ratio: u8, amount: u64,) -> Result<()> {
+    pub fn set_spinitem(&mut self, index: u8, item_mint_list: ItemRewardMints, token_type: u8, ratio: u8, amount: u64,) -> Result<()> {
         require!(index < SPIN_ITEM_COUNT as u8, SpinError::IndexOverflowSetItem);
 
         self.reward_mint_list[index as usize] = item_mint_list;
+        self.token_type_list[index as usize] = token_type;
         self.ratio_list[index as usize] = ratio;
         self.amount_list[index as usize] = amount;
         if self.count <= index {
