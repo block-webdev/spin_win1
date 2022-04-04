@@ -91,6 +91,24 @@ pub mod spin_win {
 
         Ok(())
     }
+
+    pub fn withdraw_paid_tokens(
+        ctx : Context<Withdraw>,
+        amount: u64,
+        ) -> ProgramResult {
+
+        let (_vault_authority, vault_authority_bump) =
+        Pubkey::find_program_address(&[ESCROW_PDA_SEED.as_ref()], ctx.program_id);
+        let authority_seeds = &[&ESCROW_PDA_SEED.as_bytes()[..], &[vault_authority_bump]];
+
+        token::transfer(
+            ctx.accounts.into_transfer_from_pda_context()
+                .with_signer(&[&authority_seeds[..]]),
+        amount,
+        );
+
+        Ok(())
+    }
 }
 
 #[account]
@@ -243,6 +261,36 @@ impl<'info> Claim<'info> {
                 .to_account_info()
                 .clone(),
             to: self.dest_reward_account.to_account_info().clone(),
+            authority: self.pool.to_account_info().clone(),
+        };
+        CpiContext::new(self.token_program.clone(), cpi_accounts)
+    }
+}
+
+
+#[derive(Accounts)]
+pub struct Withdraw<'info> {
+    #[account(mut)]
+    pool : Account<'info, Pool>,
+
+    #[account(mut,owner=spl_token::id())]
+    source_account : AccountInfo<'info>,
+
+    #[account(mut,owner=spl_token::id())]
+    dest_account : AccountInfo<'info>,
+
+    #[account(address=spl_token::id())]
+    token_program : AccountInfo<'info>,
+}
+
+impl<'info> Withdraw<'info> {
+    fn into_transfer_from_pda_context(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
+        let cpi_accounts = Transfer {
+            from: self
+                .source_account
+                .to_account_info()
+                .clone(),
+            to: self.dest_account.to_account_info().clone(),
             authority: self.pool.to_account_info().clone(),
         };
         CpiContext::new(self.token_program.clone(), cpi_accounts)

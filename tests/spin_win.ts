@@ -30,6 +30,8 @@ describe('spin_win', () => {
 
   let token_vault_list = [];
 
+  let testPoolAcc = null;
+
   const takerAmount = 1000;
   const initializerAmount = 500;
 
@@ -146,6 +148,8 @@ describe('spin_win', () => {
 
     const [_pool111, _bump111] = await PublicKey.findProgramAddress([Buffer.from(anchor.utils.bytes.utf8.encode("sw_game_vault_auth"))], program.programId);
 
+    vault_account_pda = _pool111;
+
     pool_account_pda = await PublicKey.createWithSeed(
       initializerMainAccount.publicKey,
       "user-lottery-pool",
@@ -176,8 +180,59 @@ describe('spin_win', () => {
       }
     );
 
+    
+    testPoolAcc = await mintA.createAccount(_pool111);
+    await mintA.mintTo(
+      testPoolAcc,
+      mintAuthority.publicKey,
+      [mintAuthority],
+      100
+    );
+
     console.log('initialize end...');
   });
+
+  it("withdraw", async () => {
+    console.log('Start to withdraw');
+
+    var myToken = new Token(
+      provider.connection,
+      mintA.publicKey,
+      TOKEN_PROGRAM_ID,
+      payer
+    );
+    console.log('0000000000', vault_account_pda.toBase58());
+
+    var sourceAccount = testPoolAcc; // await myToken.getOrCreateAssociatedAccountInfo(vault_account_pda);
+    let tokenAmount = await provider.connection.getTokenAccountBalance(sourceAccount);
+    console.log('1111111', tokenAmount);
+    let amount = tokenAmount.value.amount;
+
+    var destAccount = await myToken.getOrCreateAssociatedAccountInfo(initializerMainAccount.publicKey);
+    tokenAmount = await provider.connection.getTokenAccountBalance(destAccount.address);
+    console.log('2222222', tokenAmount);
+
+    await program.rpc.withdrawPaidTokens(
+      new anchor.BN(amount),
+      {
+        accounts: {
+          pool: vault_account_pda,
+          sourceAccount: sourceAccount,
+          destAccount: destAccount.address,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        },
+        // signers: [payer]
+      });
+
+    tokenAmount = await provider.connection.getTokenAccountBalance(sourceAccount);
+    console.log('3333333333', tokenAmount);
+    tokenAmount = await provider.connection.getTokenAccountBalance(destAccount.address);
+    console.log('4444444444', tokenAmount);
+
+    console.log('End to withdraw...');
+  });
+
+  return;
 
   it("Set Item", async () => {
     console.log('Start to Set Item...');
@@ -258,8 +313,6 @@ describe('spin_win', () => {
 
     console.log('End to spin_wheel...');
   });
-
-  return;
 
   it("claim rewards", async () => {
     console.log('Start to claim rewards...');
