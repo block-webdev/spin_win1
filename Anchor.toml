@@ -1,17 +1,17 @@
 [programs.localnet]
-spin_win = "G2roHNqPvkVz4hko9Ha8443QrFUGg5YFkLDqW7Cyt1LK"
+spin_win = "BFGm8bogh8ojiYpeDvesp6xpzNcE3WxS8YbzVPPQHBdm"
 
 [programs.devnet]
-spin_win = "G2roHNqPvkVz4hko9Ha8443QrFUGg5YFkLDqW7Cyt1LK"
+spin_win = "BFGm8bogh8ojiYpeDvesp6xpzNcE3WxS8YbzVPPQHBdm"
 
 [programs.mainnet]
-spin_win = "G2roHNqPvkVz4hko9Ha8443QrFUGg5YFkLDqW7Cyt1LK"
+spin_win = "BFGm8bogh8ojiYpeDvesp6xpzNcE3WxS8YbzVPPQHBdm"
 
 [registry]
 url = "https://anchor.projectserum.com"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "/root/.config/solana/id.json"
 
 [scripts]

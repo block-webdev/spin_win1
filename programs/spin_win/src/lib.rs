@@ -2,8 +2,9 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{clock};
 use anchor_spl::token::{self, CloseAccount, Mint, SetAuthority, TokenAccount, Transfer};
 use spl_token::instruction::AuthorityType;
+use std::mem::size_of;
 
-declare_id!("G2roHNqPvkVz4hko9Ha8443QrFUGg5YFkLDqW7Cyt1LK");
+declare_id!("BFGm8bogh8ojiYpeDvesp6xpzNcE3WxS8YbzVPPQHBdm");
 
 #[program]
 pub mod spin_win {
@@ -17,7 +18,7 @@ pub mod spin_win {
     pub fn initialize(
         ctx: Context<Initialize>,
         _bump : u8,
-    ) -> ProgramResult {
+    ) -> Result<()> {
         msg!("initialize");
 
         let pool = &mut ctx.accounts.pool;
@@ -34,9 +35,9 @@ pub mod spin_win {
         item_mint_list: [Pubkey; 10],
         count: u8,
         token_type: u8,
-        ratio: u8,
+        ratio: u32,
         amount: u64,
-    ) -> ProgramResult {
+    ) -> Result<()> {
         msg!("add_item");
 
         let mut state = ctx.accounts.state.load_mut()?;
@@ -51,9 +52,9 @@ pub mod spin_win {
         item_mint_list: [Pubkey; 10],
         count: u8,
         token_type: u8,
-        ratio: u8,
+        ratio: u32,
         amount: u64,
-    ) -> ProgramResult {
+    ) -> Result<()> {
         msg!("set_item");
 
         let mut state = ctx.accounts.state.load_mut()?;
@@ -62,17 +63,17 @@ pub mod spin_win {
         Ok(())
     }
 
-    pub fn spin_wheel(ctx: Context<SpinWheel>) -> ProgramResult {
+    pub fn spin_wheel(ctx: Context<SpinWheel>) -> Result<(u8)> {
         let mut state = ctx.accounts.state.load_mut()?;
         state.get_spinresult();
 
-        return Ok(());
+        return Ok((state.last_spinindex));
     }
 
     pub fn claim(
         ctx : Context<Claim>,
         amount: u64,
-        ) -> ProgramResult {
+        ) -> Result<()> {
 
         let (_vault_authority, vault_authority_bump) =
         Pubkey::find_program_address(&[ESCROW_PDA_SEED.as_ref()], ctx.program_id);
@@ -95,7 +96,7 @@ pub mod spin_win {
     pub fn withdraw_paid_tokens(
         ctx : Context<Withdraw>,
         amount: u64,
-        ) -> ProgramResult {
+        ) -> Result<()> {
 
         let (_vault_authority, vault_authority_bump) =
         Pubkey::find_program_address(&[ESCROW_PDA_SEED.as_ref()], ctx.program_id);
@@ -125,7 +126,7 @@ pub struct Initialize<'info> {
     #[account(mut, signer)]
     pub initializer: AccountInfo<'info>,
 
-    #[account(init, seeds=[ESCROW_PDA_SEED.as_ref()], bump=_bump, payer=initializer)]
+    #[account(init, seeds=[ESCROW_PDA_SEED.as_ref()], bump, payer=initializer, space=size_of::<Pool>() + 8)]
     pool : Account<'info, Pool>,
 
     #[account(zero)]
@@ -143,13 +144,13 @@ pub struct ItemRewardMints {
     count: u8,
 }
 
-// space : 4975
+// space : 5020 // old : 4975
 #[account(zero_copy)]
 #[repr(packed)]
 pub struct SpinItemList {
     reward_mint_list: [ItemRewardMints; SPIN_ITEM_COUNT],   // 321 * 15
     token_type_list: [u8; SPIN_ITEM_COUNT],   // 15
-    ratio_list: [u8; SPIN_ITEM_COUNT],  // 15
+    ratio_list: [u32; SPIN_ITEM_COUNT],  // 4 * 15
     amount_list: [u64; SPIN_ITEM_COUNT],    // 8 * 15
     last_spinindex: u8, // 1
     count: u8, // 1
@@ -181,7 +182,7 @@ impl Default for SpinItemList {
 }
 
 impl SpinItemList {
-    pub fn add_spinitem(&mut self, item_mint_list: ItemRewardMints, token_type: u8, ratio: u8, amount: u64,) -> Result<()> {
+    pub fn add_spinitem(&mut self, item_mint_list: ItemRewardMints, token_type: u8, ratio: u32, amount: u64,) -> Result<()> {
         require!(self.count <= SPIN_ITEM_COUNT as u8, SpinError::CountOverflowAddItem);
 
         self.reward_mint_list[self.count as usize] = item_mint_list;
@@ -193,7 +194,7 @@ impl SpinItemList {
         Ok(())
     }
 
-    pub fn set_spinitem(&mut self, index: u8, item_mint_list: ItemRewardMints, token_type: u8, ratio: u8, amount: u64,) -> Result<()> {
+    pub fn set_spinitem(&mut self, index: u8, item_mint_list: ItemRewardMints, token_type: u8, ratio: u32, amount: u64,) -> Result<()> {
         require!(index < SPIN_ITEM_COUNT as u8, SpinError::IndexOverflowSetItem);
 
         self.reward_mint_list[index as usize] = item_mint_list;
@@ -213,11 +214,12 @@ impl SpinItemList {
 
     pub fn get_spinresult(&mut self) {
         let c = clock::Clock::get().unwrap();
-        let r = (c.unix_timestamp % 100) as u8;
+        let r = (c.unix_timestamp % 100) as u32;
         let mut start = 0;
         for (pos, item) in self.ratio_list.iter().enumerate() {
             let end = start + item;
-            if r >= start && r < end {
+            let r_pow = r.pow(3);
+            if r_pow >= start && r_pow < end {
                 self.last_spinindex = pos as u8;
                 return;
             }
@@ -234,21 +236,26 @@ pub struct SpinWheel<'info> {
 
 #[derive(Accounts)]
 pub struct Claim<'info> {
+    /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(mut, signer)]
     owner : AccountInfo<'info>,
 
     state : AccountLoader<'info, SpinItemList>,
 
+    /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(mut)]
     pool : Account<'info, Pool>,
 
 
+    /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(mut,owner=spl_token::id())]
     source_reward_account : AccountInfo<'info>,
 
+    /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(mut,owner=spl_token::id())]
     dest_reward_account : AccountInfo<'info>,
 
+    /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(address=spl_token::id())]
     token_program : AccountInfo<'info>,
 }
@@ -273,12 +280,15 @@ pub struct Withdraw<'info> {
     #[account(mut)]
     pool : Account<'info, Pool>,
 
+    /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(mut,owner=spl_token::id())]
     source_account : AccountInfo<'info>,
 
+    /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(mut,owner=spl_token::id())]
     dest_account : AccountInfo<'info>,
 
+    /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(address=spl_token::id())]
     token_program : AccountInfo<'info>,
 }
@@ -297,7 +307,7 @@ impl<'info> Withdraw<'info> {
     }
 }
 
-#[error]
+#[error_code]
 pub enum SpinError {
     #[msg("Count Overflow To Add Item")]
     CountOverflowAddItem,
